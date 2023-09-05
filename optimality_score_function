@@ -1,0 +1,211 @@
+library(dplyr)
+optimality_score_function<-
+  function(sdata, type, duration){
+    if (type == "morph" & duration == "MAU"){
+      #exclude rows without known start time of gesture
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude",]
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude_start",]
+      #exclude rows without known MAU end time
+      sdata<-sdata[sdata$Mau_value!="MAU_ex",]
+      sdata<-sdata[sdata$Mau_value!="MAU_GA_ex",]
+      #remove unclear sequence parts
+      ##sdata<-sdata[sdata$Sequence_part!="Unclear",] - don't really need this
+      #Remove gestures produced by unk individuals
+      sdata<-sdata[sdata$Signaller!="Unk",]
+      sdata<-sdata[sdata$Signaller!="A_F",]
+      sdata<-sdata[sdata$Signaller!="A_M",]
+      sdata<-sdata[sdata$Signaller!="SA_F",]
+      sdata<-sdata[sdata$Signaller!="SA_M",]
+      sdata<-sdata[sdata$Signaller!="J",]
+      sdata<-sdata[sdata$Signaller!="I",]
+      
+      data<-sdata %>%
+        group_by(morph) %>%
+        summarize(median=median(Mau_duration),
+                  freq=n())
+      names(which(colSums(is.na(data)) > 0))
+      data<-na.omit(data)
+      #Claculate L values
+      L<-sum(data$median*data$freq)/sum(data$freq) #Calculate L
+      Lr<-sum(data$median)/nrow(data) #Calculate Lr
+      #Sort data for Lmin calculation
+      #First need to sort all data based on F values
+      df<-data%>%
+        select(2,3)
+      df<-as.data.frame(df)
+      n   <- ncol(df)
+      as  <- 1 # columns to be sorted ascending
+      de  <- 2 # columns to be sorted descending
+      out <- sapply(1:n, function(x) {
+        if(x %in% as) {
+          return(sort(df[,x], decreasing = F))
+        } else if (x %in% de) {
+          return(sort(df[,x], decreasing = T))
+        }
+        return(df[,x])
+      })
+      newdata<-as.data.frame(out)
+      Lmin<-sum(newdata$V1*newdata$V2)/sum(newdata$V2)
+      if (is.na(Lr) || is.na(Lmin) || Lr== Lmin) {
+        return(NULL)  # Skip this individual if Lr = Lmin
+      }
+      Psi<-(Lr-L)/(Lr-Lmin)
+      return(Psi)
+    }
+    
+    else if (type == "Gesture_record" & duration == "MAU"){
+      
+      #exclude rows without known start time of gesture
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude",]
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude_start",]
+      #exclude rows without known MAU end time
+      sdata<-sdata[sdata$Mau_value!="MAU_ex",]
+      sdata<-sdata[sdata$Mau_value!="MAU_GA_ex",]
+      #remove unclear sequence parts
+      ##sdata<-sdata[sdata$Sequence_part!="Unclear",] - don't really need this
+      #Remove gestures produced by unk individuals
+      sdata<-sdata[sdata$Signaller!="Unk",]
+      sdata<-sdata[sdata$Signaller!="A_F",]
+      sdata<-sdata[sdata$Signaller!="A_M",]
+      sdata<-sdata[sdata$Signaller!="SA_F",]
+      sdata<-sdata[sdata$Signaller!="SA_M",]
+      sdata<-sdata[sdata$Signaller!="J",]
+      sdata<-sdata[sdata$Signaller!="I",]
+      
+      data<-sdata %>%
+        group_by(Gesture_record) %>%
+        summarize(median=median(Mau_duration),
+                  freq=n())
+      names(which(colSums(is.na(data)) > 0))
+      data<-na.omit(data)
+      #Claculate L values
+      L<-sum(data$median*data$freq)/sum(data$freq) #Calculate L
+      Lr<-sum(data$median)/nrow(data) #Calculate Lr
+      #Sort data for Lmin calculation
+      #First need to sort all data based on F values
+      df<-data%>%
+        select(2,3)
+      df<-as.data.frame(df)
+      n   <- ncol(df)
+      as  <- 1 # columns to be sorted ascending
+      de  <- 2 # columns to be sorted descending
+      out <- sapply(1:n, function(x) {
+        if(x %in% as) {
+          return(sort(df[,x], decreasing = F))
+        } else if (x %in% de) {
+          return(sort(df[,x], decreasing = T))
+        }
+        return(df[,x])
+      })
+      newdata<-as.data.frame(out)
+      Lmin<-sum(newdata$V1*newdata$V2)/sum(newdata$V2)
+      if (is.na(Lr) || is.na(Lmin) || Lr == Lmin) {
+        return(NULL)  # Skip this individual if Lr = Lmin
+      }
+      
+      Psi<-(Lr-L)/(Lr-Lmin)
+      return(Psi)}
+    
+    else if (type == "morph" & duration == "GA") {
+      #exclude rows without known start time of gesture
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude",]
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude_start",]
+      #exclude rows without known GA end time
+      sdata<-sdata[sdata$Ga_value!="GA_stop_ex",]
+      sdata<-sdata[sdata$Ga_value!="MAU_GA_ex",]
+      #remove unclear sequence parts
+      ##sdata<-sdata[sdata$Sequence_part!="Unclear",] - don't really need this
+      #Remove gestures produced by unk individuals
+      sdata<-sdata[sdata$Signaller!="Unk",]
+      sdata<-sdata[sdata$Signaller!="A_F",]
+      sdata<-sdata[sdata$Signaller!="A_M",]
+      sdata<-sdata[sdata$Signaller!="SA_F",]
+      sdata<-sdata[sdata$Signaller!="SA_M",]
+      sdata<-sdata[sdata$Signaller!="J",]
+      sdata<-sdata[sdata$Signaller!="I",]
+      
+      data<-sdata %>%
+        group_by(morph) %>%
+        summarize(median=median(Ga_duration),
+                  freq=n())
+      names(which(colSums(is.na(data)) > 0))
+      data<-na.omit(data)
+      #Claculate L values
+      L<-sum(data$median*data$freq)/sum(data$freq) #Calculate L
+      Lr<-sum(data$median)/nrow(data) #Calculate Lr
+      #Sort data for Lmin calculation
+      #First need to sort all data based on F values
+      df<-data%>%
+        select(2,3)
+      df<-as.data.frame(df)
+      n   <- ncol(df)
+      as  <- 1 # columns to be sorted ascending
+      de  <- 2 # columns to be sorted descending
+      out <- sapply(1:n, function(x) {
+        if(x %in% as) {
+          return(sort(df[,x], decreasing = F))
+        } else if (x %in% de) {
+          return(sort(df[,x], decreasing = T))
+        }
+        return(df[,x])
+      })
+      newdata<-as.data.frame(out)
+      Lmin<-sum(newdata$V1*newdata$V2)/sum(newdata$V2)
+      if (is.na(Lr) || is.na(Lmin) || Lr == Lmin) {
+        return(NULL)  # Skip this individual if Lr = Lmin
+      }
+      
+      Psi<-(Lr-L)/(Lr-Lmin)
+      return(Psi)
+    } 
+    
+    else if (type == "Gesture_record" & duration == "GA")
+    { #exclude rows without known start time of gesture
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude",]
+      sdata<-sdata[sdata$Duration_analysis_include!="Exclude_start",]
+      #exclude rows without known GA end time
+      sdata<-sdata[sdata$Ga_value!="GA_stop_ex",]
+      sdata<-sdata[sdata$Ga_value!="MAU_GA_ex",]
+      #remove unclear sequence parts
+      ##sdata<-sdata[sdata$Sequence_part!="Unclear",] - don't really need this
+      #Remove gestures produced by unk individuals
+      sdata<-sdata[sdata$Signaller!="Unk",]
+      sdata<-sdata[sdata$Signaller!="A_F",]
+      sdata<-sdata[sdata$Signaller!="A_M",]
+      sdata<-sdata[sdata$Signaller!="SA_F",]
+      sdata<-sdata[sdata$Signaller!="SA_M",]
+      sdata<-sdata[sdata$Signaller!="J",]
+      sdata<-sdata[sdata$Signaller!="I",]
+      
+      data<-sdata %>%
+        group_by(Gesture_record) %>%
+        summarize(median=median(Ga_duration),
+                  freq=n())
+      names(which(colSums(is.na(data)) > 0))
+      data<-na.omit(data)
+      #Claculate L values
+      L<-sum(data$median*data$freq)/sum(data$freq) #Calculate L
+      Lr<-sum(data$median)/nrow(data) #Calculate Lr
+      #Sort data for Lmin calculation
+      #First need to sort all data based on F values
+      df<-data%>%
+        select(2,3)
+      df<-as.data.frame(df)
+      n   <- ncol(df)
+      as  <- 1 # columns to be sorted ascending
+      de  <- 2 # columns to be sorted descending
+      out <- sapply(1:n, function(x) {
+        if(x %in% as) {
+          return(sort(df[,x], decreasing = F))
+        } else if (x %in% de) {
+          return(sort(df[,x], decreasing = T))
+        }
+        return(df[,x])
+      })
+      newdata<-as.data.frame(out)
+      Lmin<-sum(newdata$V1*newdata$V2)/sum(newdata$V2)
+      if (is.na(Lr) || is.na(Lmin) || Lr == Lmin) {
+      }
+      Psi<-(Lr-L)/(Lr-Lmin)
+      return(Psi)
+    }}
