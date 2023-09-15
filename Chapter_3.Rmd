@@ -1,0 +1,1397 @@
+---
+title: "Z&M Laws"
+author: "Alexandra Safryghin"
+date: '2022-06-15'
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+editor_options:
+  markdown:
+    wrap: sentence
+knitr::eval: false
+bibliography: references.bib
+---
+
+# Methods
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#Load packages ----
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(modelr)
+library(rstan)
+library(lme4)
+library(emmeans)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+library(car)
+devtools::load_all("/Users/as493/Documents/GitHub/PhD_Thesis/PhD Analysis R files/Gestures-main/R package/wildminds/R/")
+
+
+```
+
+
+
+```{r Data_handling_menz, echo=T, results='asis'}
+#Load data 
+library(dplyr)
+MainData<-read.csv( '/Users/as493/Documents/GitHub/PhD_Thesis/Data/AS_MainData with morhps.csv', header=T, stringsAsFactor=T)
+
+#Remove unclear sequence sizes
+Sequence_dataset<-MainData%>% subset(Part_sequence!="Unclear")
+
+#Force MAU_ex durations to equal 0 so that the sequence detection function flags them as to exclude them 
+Sequence_dataset$Mau_end_time <- ifelse(Sequence_dataset$Mau_value  %in% c("MAU_ex", "MAU_GA_ex"), 0, Sequence_dataset$Mau_end_time)
+
+# apply
+gesture.sequences = detect_sequences(data=Sequence_dataset, # this is the Sonso data
+                 steps = 1, # sequences defined as less than 1 second apart
+                 col_names = c('renamed'), # Original Filemaker column names
+                 duration_type = c('mau')) # duration determined by full gesture duration
+
+## take a look at the data frame, with the sequence information added
+data.frame<-gesture.sequences$data_frame_sequences
+
+## take a look at the summary of the sequences
+sequence_summaries<-gesture.sequences$sequence_summary
+
+#Create the dataset needed for Menzerath's law analysis in gesture action durations. 
+trial <- sequence_summaries %>%
+    filter(
+      .data$Mau_null == 0
+    ) #From the sequence_summaries data we filter out all the sequences that have at least one null MAUs (MAU_ex or MAU_GA_ex)
+
+SIDTrial<-trial%>% #slect sequence IDs for which we have all MAU values for 
+  select(Sequence_identifier, Sequence_length)
+
+
+ga<-data.frame%>% # use the dataframe from the sequence detection function (for which each gesture has a sequence identifier) to select only the sequence from
+  inner_join(SIDTrial)%>% #Sequence ID, so that we get all the sequences that are full in their MAUs although might not be full for GA
+  filter(Ga_value %in% c('MAU_GA_in', 'GA_stop_in')) %>%
+  select(Ga_duration, Sequence_length, Signaller, morph, Sequence_identifier, Goal, Social_unit, Recording_number, Gesture_record)
+
+write.csv(ga, "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_FINAL.csv") #This datagrame is the one to use for Menzerath's law in GA
+
+mau<-data.frame%>% # use the dataframe from the sequence detection function (for which each gesture has a sequence identifier) to select only the sequence from
+  inner_join(SIDTrial)%>% #Sequence ID, so that we get all the sequences that are full in their MAUs although might not be full for GA
+  filter(Mau_value %in% c('MAU_in', 'MAU_GA_in')) %>%
+  select(Mau_duration, Sequence_length, Signaller, morph, Sequence_identifier, Goal, Social_unit, Recording_number)
+write.csv(mau, "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_MAU_FINAL.csv")
+
+#This datagrame is the one to use for Menzerath's law in GA
+mau<-read.csv( "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_MAU_FINAL.csv")
+ga<-read.csv( "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_FINAL.csv")
+#Remove sequences bigger than 5 in both dataasets
+Gesture_record<-MainData%>%select(Recording_number, Gesture_record)
+
+mau<-mau%>%
+  left_join(Gesture_record, by = "Recording_number")
+
+ga<-ga%>%  left_join(Gesture_record, by = "Recording_number")
+
+Menzerath_GA<-ga%>%
+  filter(Sequence_length<6)
+k$Sequence_length<- ordered(k$Sequence_length, #make sequence length as ordered variable
+                       levels = c(1, 2, 3, 4,5))
+
+Menzerath_MAU<-mau%>%
+  filter(Sequence_length<6)
+t$Sequence_length<- ordered(t$Sequence_length, #make sequence length as ordered variable
+                       levels = c(1, 2, 3, 4,5))
+
+write.csv(k, "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_FINAL_Reduced.csv")
+write.csv(t, "/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_MAU_FINAL_Reduced.csv")
+```
+
+
+
+```{r}
+#Make tables 
+Tabledata<-ga%>%
+  group_by(Social_unit)%>%
+  summarise(total=sum(n_distinct(Sequence_identifier)))
+
+Table<-ga%>%
+  group_by(Social_unit, Sequence_length)%>%
+  summarise(n=n_distinct(Sequence_identifier))
+
+Table<-Table%>%
+  left_join(Tabledata)%>%
+  mutate(n=(n/total))
+
+Table$n<-round(Table$n, digits=3)
+
+Table$n<-paste0(Table$n * 100, "%")
+
+Table<-Table%>%
+  spread(Sequence_length, n, fill = "NA")%>%
+  rename(Community = Social_unit)
+
+Table%>%
+  kable(table.attr = "style = \"color: black;\"")%>%
+  add_header_above(c("", "Sequence length" = 10))%>%
+  kable_styling(full_width = T)
+
+knitr::kable(Table, 
+             caption = "Distribution of gesture tokens per sequence length, per community")
+
+#Repeat for MAU
+Tabledata<-mau%>%
+  group_by(Social_unit)%>%
+  summarise(total=sum(n_distinct(Sequence_identifier)))
+
+Table<-mau%>%
+  group_by(Social_unit, Sequence_length)%>%
+  summarise(n=n_distinct(Sequence_identifier))
+
+Table<-Table%>%
+  left_join(Tabledata)%>%
+  mutate(n=(n/total))
+
+Table$n<-round(Table$n, digits=3)
+
+Table$n<-paste0(Table$n * 100, "%")
+
+Table<-Table%>%
+  spread(Sequence_length, n, fill = "NA")%>%
+  rename(Community = Social_unit)
+
+Table%>%
+  kable(table.attr = "style = \"color: black;\"")%>%
+  add_header_above(c("", "Sequence length" = 10))%>%
+  kable_styling(full_width = T)
+
+knitr::kable(Table, 
+             caption = "Distribution of gesture tokens per sequence length, per community")
+
+
+```
+
+
+
+```{r Data_handling_Zipf, eval=F, echo=FALSE}
+#Create Zipf's law dataset for MAU
+Zipf_MAU<-MainData%>%
+  subset(Duration_analysis_include %in% c("Include", "ExcludeEnd") & #exclude gestures we don't have complete durations for
+           Mau_value %in% c("MAU_in", "MAU_GA_in"))%>%
+  select(Mau_duration, morph, Social_unit, Goal, Signaller, Gesture_record)
+
+FreqsMorph<-Zipf_MAU%>% #create relative frequency variable
+  group_by(morph, Social_unit)%>%
+  summarise(Freq=n())
+SumsMorph<-FreqsMorph%>%
+  group_by(Social_unit)%>%
+  summarise(Total=sum(Freq))
+FreqsMorph<-FreqsMorph%>%
+  left_join(SumsMorph)
+
+FreqsMorph$p<-FreqsMorph$Freq/FreqsMorph$Total
+
+FreqsGT<-Zipf_MAU%>% #create relative frequency varaible
+  group_by(Gesture_record, Social_unit)%>%
+  summarise(Freq=n())
+SumsGT<-FreqsGT%>%
+  group_by(Social_unit)%>%
+  summarise(Total=sum(Freq))
+FreqsGT<-FreqsGT%>%
+  left_join(SumsGT)
+FreqsGT$t<-FreqsGT$Freq/FreqsGT$Total
+
+str(FreqsMorph)
+Zipf_MAU<-Zipf_MAU%>%
+  left_join(FreqsMorph, by=c("morph","Social_unit"))%>%select(-Freq, -Total)
+  #add relative frequency (p) to dataset
+Zipf_MAU<-Zipf_MAU%>%
+  left_join(FreqsGT, by=c("Gesture_record","Social_unit"))%>%select(-Freq, -Total)
+
+str(Zipf_MAU)
+#Use group as comparison
+Zipf_MAU$Community <- Zipf_MAU[,"Social_unit"] %>%
+  unlist()%>%
+  as.character()
+write.csv(Zipf_MAU, '/Users/as493/Documents/GitHub/PhD_Thesis/Data/ZipfData.csv')
+```
+
+##### Morphs
+
+```{r Zipf_model_MAU}
+Zipf_MAU<-read.csv( '/Users/as493/Documents/GitHub/PhD_Thesis/Data/ZipfData.csv')
+
+Zipf_MAU$log<-log(Zipf_MAU$Mau_duration) #log transform mau duration
+
+Zipf_MAU.morph<-Zipf_MAU%>%select(Signaller, log, p, Community, Goal, Mau_duration, morph)%>%na.omit()
+#Check for collinearity
+library(lme4)
+Z.full.t<-lmer(log~ p + Community + (1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_MAU.morph )
+library(car)
+vif(Z.full.t)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check for model assumptions
+Z.full<-lmer(log ~ p*Community +(1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_MAU.morph)
+
+
+par(mfrow = c(2,2))
+qqnorm(resid(Z.full)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Z.full))
+hist(resid(Z.full)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Z.full), resid(Z.full)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+```
+
+```{r Zipf model}
+# Null model
+Z.null<-lmer(log ~1+ (1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_MAU.morph)
+anova(Z.full, Z.null)
+
+drop1(Z.full, test = "Chisq" )
+
+modified_tab_model <- function(...) {
+  sjPlot::tab_model(...,show.p = FALSE, show.se = T)
+}
+tab_model_output<-modified_tab_model(Z.full)
+
+
+# change the reference level of the predictor to "Sonso" to check Sonso-Waibira difference
+Zipf_MAU$Community <-as.factor(Zipf_MAU$Community)
+Zipf_MAU$Community <- relevel(Zipf_MAU$Community, ref = "Sonso")
+
+# fit the model again with the new reference level
+model2<-lmer(log ~ p*Community +(1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_MAU)
+modified_tab_model(model2)
+library(sjPlot)
+
+#plot predicted values
+set_theme(base = theme_classic(), #To remove the background color and the grids
+          axis.title.size = 1.1,  #To change axis title size
+          axis.textsize.x = 1,  #To change x axis text size
+          axis.textsize.y = 1)  #To change y axis text size
+plot_model(Z.full, type ="int", 
+           colors = colorBlindBlack8[c(3,6,2)],axis.title = "log(MAU duration)", title = "")
+
+goals<-Zipf_MAU%>%
+  group_by(Goal, Community)%>%
+  summarise(F=n())
+
+install.packages("broom.mixed")
+library(broom.mixed)
+# recompute models per community to test whether the relationship is significant
+Sonso.MAU<-Zipf_MAU%>%filter(Community=="Sonso")
+Z.full.Sonso<-lmer(log ~ p +(1 | Signaller) + (1|morph) + (1|Goal),data= Sonso.MAU)
+modified_tab_model(Z.full.Sonso)
+#Now repeat for Waibira
+Waibira.MAU<-Zipf_MAU%>%filter(Social_unit=="Waibira")
+Z.full.Waibira<-lmer(log ~ p +(1 | Signaller) + (1|morph) + (1|Goal),data= Waibira.MAU)
+modified_tab_model(Z.full.Waibira)
+
+#Now repeat for Bosspu
+Bossou.MAU<-Zipf_MAU%>%filter(Social_unit=="Bossou")
+Z.full.Bossou<-lmer(log ~ p +(1 | Signaller) + (1|morph) + (1|Goal),data= Bossou.MAU)
+modified_tab_model(Z.full.Bossou)
+```
+
+##### Gesture Types
+
+```{r Zipf_model_MAU_GT}
+#Check for collinearity
+Z.full.Gt<-lmer(log~ t + Community + (1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_MAU )
+vif(Z.full.Gt)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check for model assumptions
+Z.full.GT<-lmer(log ~ t*Community +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_MAU)
+residuals <- residuals(Z.full.GT)
+
+# Plotting the residuals
+plot(residuals, main = "Residual Analysis", xlab = "Observation", ylab = "Residuals")
+
+par(mfrow = c(2,2))
+qqnorm(resid(Z.full.GT)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Z.full.GT))
+hist(resid(Z.full.GT)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Z.full.GT), resid(Z.full.GT)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+```
+
+```{r Zipf model}
+# Null model
+Z.null.GT<-lmer(log ~1+ (1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_MAU)
+anova(Z.full.GT, Z.null.GT)
+
+drop1(Z.full.GT, test = "Chisq" )
+
+modified_tab_model <- function(...) {
+  sjPlot::tab_model(...,show.p = FALSE, show.se = T)
+}
+summary(Z.full.GT)
+tab_model_output<-modified_tab_model(Z.full.GT)
+# Display tab_model() output as a table
+
+# change the reference level of the predictor to "Sonso" to check Sonso-Waibira difference
+Zipf_MAU$Community<-as.factor(Zipf_MAU$Community)
+Zipf_MAU$Community <- relevel(Zipf_MAU$Community, ref = "Sonso")
+
+# fit the model again with the new reference level
+model2.GT <- lmer(Mau_duration ~t*Community+ (1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_MAU)
+modified_tab_model(model2.GT)
+summary(model2.GT)
+library(sjPlot)
+install.packages("sjPlot")
+library(glmmTMB)
+
+#plot predicted values
+set_theme(base = theme_classic(), #To remove the background color and the grids
+          axis.title.size = 1.1,  #To change axis title size
+          axis.textsize.x = 1,  #To change x axis text size
+          axis.textsize.y = 1)  #To change y axis text size
+plot_model(Z.full.GT, type ="int", 
+           colors = colorBlindBlack8[c(3,6,2)],axis.title = "log(MAU duration)", title = "")
+goals<-Zipf_MAU%>%
+  group_by(Goal, Community)%>%
+  summarise(F=n())
+```
+
+
+
+```{r ZipfGraphMAU}
+#Make graph - very ugly atm 
+Aggregate2<-Zipf_MAU %>% 
+  group_by(morph, Community) %>% # our group
+  summarise( # summarise operation by group
+    F=n(),
+    p=mean(p),
+    sd=sd(Mau_duration),
+    d=mean(Mau_duration),)
+
+my_x_title<- expression(paste("Morph relative frequency - p"))
+my_y_title<- expression(paste("MAU duration (s)"))
+library(ggplot2)
+AllZipf<-ggplot(Aggregate2, aes(x=p, y=d, color=Community)) +
+  geom_point(size=2.5) + 
+  theme_classic() +
+  labs(x=my_x_title, y=my_y_title) +
+  theme(axis.text = element_text(size=10), axis.title = element_text(size=12), legend.text = element_text(size = 10))  +
+  geom_errorbar(aes(ymin=d-sd, ymax=d+sd), width=3)  +  
+  geom_smooth(method=lm, se=F) +
+  scale_x_continuous(breaks = c(0,0.025,0.05,0.075,0.1), limits = c(0,0.08))+ 
+  scale_y_continuous(breaks=c(0,1.0,2.0,3.0,4.0,5.0,6.0,7, 8))+
+    scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+
+
+AllZipf <- ggplot(Zipf_MAU, aes(x = p, y = Mau_duration, color = Community)) +
+  theme_classic()  +
+  labs(x = my_x_title, y = my_y_title) +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 12), legend.text = element_text(size = 10)) +
+  geom_smooth(method = lm, se = T) +
+  scale_x_continuous(breaks = c(0, 0.025, 0.05, 0.075), limits = c(0, 0.08)) +
+  scale_y_continuous(breaks = c(0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7, 8)) +
+  scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+
+
+
+#Make graph - very ugly atm 
+Aggregate3<-Zipf_MAU %>% 
+  group_by(Gesture_record, Community) %>% # our group
+  summarise( # summarise operation by group
+    F=n(),
+    t=mean(t),
+    sd=sd(Mau_duration),
+    d=mean(Mau_duration),)
+
+my_x_title<- expression(paste("Gesture Action relative frequency - t"))
+my_y_title<- expression(paste("MAU duration (s)"))
+
+colorBlindBlack8  <- c("#000000", "#E69F00", "#56B4E9", "#009E73", 
+                       "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+library(ggplot2)
+AllZipf.GT <- ggplot(Aggregate3, aes(x = t, y = d, color = Community)) +
+  geom_point(size = 2.5) +
+  theme_classic() +
+  labs(x = my_x_title, y = my_y_title) +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 12), legend.text = element_text(size = 10)) +
+  geom_errorbar(aes(ymin = d - sd, ymax = d + sd), width = 3) +
+  geom_smooth(method = lm, se = F) +
+  scale_x_continuous(breaks = c(0, 0.025, 0.05, 0.075), limits = c(0, 0.08)) +
+  scale_y_continuous(breaks = c(0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7, 8)) +
+  scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+
+AllZipf.GT <- ggplot(Zipf_MAU, aes(x = t, y = log, color = Community)) +
+  theme_classic() + geom_point() +
+  labs(x = my_x_title, y = my_y_title) +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 12), legend.text = element_text(size = 10)) +
+  geom_smooth(method = lm, se = T) +
+  scale_x_continuous(breaks = c(0, 0.025, 0.05, 0.075), limits = c(0, 0.08)) +
+  scale_y_continuous(breaks = c(0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7, 8)) +
+  scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+AllZipf.GT
+
+library(ggdist)
+ggplot(Zipf_MAU, aes(x = t, y = Community, fill=Community)) +
+  ggdist::stat_halfeye(aes(fill=Mau_duration),adjust=0.5,
+                       justification=-.2,
+                       .width=0,
+                       point_color=NA,
+                       position=position_dodge(width=0.6))
+```
+
+```{r ZipfMau_WithinCmm}
+# recompute models per community to test whether the relationship is significant
+Sonso.MAU<-Zipf_MAU%>%filter(Community=="Sonso")
+Z.full.Sonso.GT<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Sonso.MAU)
+modified_tab_model(Z.full.Sonso.GT)
+#Now repeat for Waibira
+Waibira.MAU<-Zipf_MAU%>%filter(Social_unit=="Waibira")
+Z.full.Waibira.GT<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Waibira.MAU)
+modified_tab_model(Z.full.Waibira.GT)
+
+#Now repeat for Bosspu
+Bossou.MAU<-Zipf_MAU%>%filter(Social_unit=="Bossou")
+Z.full.Bossou.GT<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Bossou.MAU)
+modified_tab_model(Z.full.Bossou.GT)
+```
+
+
+
+#### *Zipf-model-GA*
+
+```{r Data_handling_Zipf_GA}
+####Repeat with GA----
+#create dataset
+Zipf_data.GA<-MainData%>%
+  subset(Duration_analysis_include %in% c("Include", "ExcludeEnd") &
+           Ga_value %in% c("MAU_GA_in", "GA_stop_in"))
+FreqsMorph.GA<-Zipf_data.GA%>% #create relative frequency varaible
+  group_by(morph, Social_unit)%>%
+  summarise(Freq=n())
+SumsMorph.GA<-FreqsMorph.GA%>%
+  group_by(Social_unit)%>%
+  summarise(Total=sum(Freq))
+FreqsMorph.GA<-FreqsMorph.GA%>%
+  left_join(SumsMorph.GA)
+
+FreqsMorph.GA$p<-FreqsMorph.GA$Freq/FreqsMorph.GA$Total
+
+FreqsGT.GA<-Zipf_data.GA%>% #create relative frequency varaible
+  group_by(Gesture_record, Social_unit)%>%
+  summarise(Freq=n())
+SumsGT.GA<-FreqsGT.GA%>%
+  group_by(Social_unit)%>%
+  summarise(Total=sum(Freq))
+FreqsGT.GA<-FreqsGT.GA%>%
+  left_join(SumsGT.GA)
+FreqsGT.GA$t<-FreqsGT.GA$Freq/FreqsGT.GA$Total
+
+Zipf_data.GA<-Zipf_data.GA%>%
+  left_join(FreqsMorph.GA, by=c("morph","Social_unit"))%>%select(-Freq, -Total)
+  #add relative frequency (p) to dataset
+Zipf_data.GA<-Zipf_data.GA%>%
+  left_join(FreqsGT.GA, by=c("Gesture_record","Social_unit"))%>%select(-Freq, -Total)
+
+#Use group as comparison
+Zipf_data.GA$Community <- Zipf_data.GA[,"Social_unit"] %>%
+  unlist()%>%
+  as.character()
+write.csv(Zipf_data.GA, '/Users/as493/Documents/GitHub/PhD_Thesis/Data/ZipfData.GA.csv')
+Zipf_data.GA <- as.data.frame(Zipf_data.GA)
+
+```
+
+##### Morphs
+
+```{r Zipf-model-GA}
+#Check for collinearity 
+Zipf_data.GA<-read.csv( '/Users/as493/Documents/GitHub/PhD_Thesis/Data/ZipfData.GA.csv')
+
+Zipf_data.GA$log<-log(Zipf_data.GA$Ga_duration)
+vifZ.GA<-lmer(log ~ p+Community +(1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_data.GA)
+vif(vifZ.GA)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check model assumptions
+Z.full.GA<-lmer(log ~ p*Community +(1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_data.GA)
+
+par(mfrow = c(2,2))
+qqnorm(resid(Z.full.GA)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Z.full.GA))
+hist(resid(Z.full.GA)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Z.full.GA), resid(Z.full.GA)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+
+# Null model
+Z.null.GA<-lmer(log ~1+ (1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_data.GA)
+
+anova(Z.full.GA, Z.null.GA)
+
+drop1(Z.full.GA, test = "Chisq" ) #No significance
+Z.full.GA<-lmer(log ~ p+Community +(1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_data.GA)
+
+
+modified_tab_model(Z.full.GA)
+
+
+# change the reference level of the predictor to "Sonso" to check Sonso-Waibira difference
+Zipf_data.GA$Community <-as.factor(Zipf_data.GA$Community)
+Zipf_data.GA$Community <- relevel(Zipf_data.GA$Community, ref = "Sonso")
+
+# fit the model again with the new reference level
+model3 <- lmer(log ~p+Community+ (1 | Signaller) + (1|morph) + (1|Goal),data= Zipf_data.GA)
+modified_tab_model(model3)
+
+
+plot_model(Z.full.GA, type = 'int')
+
+```
+
+##### Gesture Types
+
+```{r Zipf-model-GA_GT}
+#Check for collinearity 
+vifZ.GA.GT<-lmer(log ~ t+Community +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_data.GA)
+vif(vifZ.GA.GT)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check model assumptions
+Z.full.GA.GT<-lmer(log ~ t*Community +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_data.GA)
+
+par(mfrow = c(2,2))
+qqnorm(resid(Z.full.GA.GT)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Z.full.GA.GT))
+hist(resid(Z.full.GA.GT)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Z.full.GA.GT), resid(Z.full.GA.GT)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+
+# Null model
+Z.null.GA.GT<-lmer(log ~1+ (1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_data.GA)
+
+anova(Z.full.GA.GT, Z.null.GA.GT)
+
+drop1(Z.full.GA.GT, test = "Chisq" ) #No significance
+Z.full.GA.GT<-lmer(log ~ t + Community +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_data.GA)
+
+modified_tab_model(Z.full.GA.GT)
+
+
+# change the reference level of the predictor to "Sonso" to check Sonso-Waibira difference
+Zipf_data.GA$Community <-as.factor(Zipf_data.GA$Community)
+Zipf_data.GA$Community <- relevel(Zipf_data.GA$Community, ref = "Sonso")
+
+# fit the model again with the new reference level
+model3.GT <- lmer(log ~t+Community+ (1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Zipf_data.GA)
+modified_tab_model(model3.GT)
+
+
+# recompute models per community to test whether the relationship is significant
+Sonso.GA<-Zipf_data.GA%>%filter(Community=="Sonso")
+Z.full.Sonso.GT.GA<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Sonso.GA)
+modified_tab_model(Z.full.Sonso.GT.GA)
+#Now repeat for Waibira
+Waibira.GA<-Zipf_data.GA%>%filter(Social_unit=="Waibira")
+Z.full.Waibira.GT.GA<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Waibira.GA)
+modified_tab_model(Z.full.Waibira.GT)
+
+#Now repeat for Bosspu
+Bossou.GA<-Zipf_data.GA%>%filter(Social_unit=="Bossou")
+Z.full.Bossou.GT.GA<-lmer(log ~ t +(1 | Signaller) + (1|Gesture_record) + (1|Goal),data= Bossou.GA)
+modified_tab_model(Z.full.Bossou.GT.GA)
+
+
+
+
+plot_model(Z.full.GA_noint.GT)
+```
+
+```{r Zipf.GA_Graphs}
+### Graph
+library(dplyr)
+Aggregate<-Zipf_data.GA %>% 
+  group_by(morph, Community) %>% # our group
+  summarise( # summarise operation by group
+    F=n(),
+    p=mean(p),
+    sd=sd(Ga_duration),
+    d=mean(Ga_duration),
+    logm=mean(log),
+    logsd=sd(log))
+
+my_x_title<- expression(paste("Morph relative frequency - p"))
+my_y_title<- expression(paste("PAU duration (s)"))
+library(ggplot2)
+P.Zipf.GA<-ggplot(Aggregate, aes(x=p, y=d, color=Community)) +
+  geom_point(size=2.5) + 
+  theme_classic() +
+  labs(x=my_x_title, y=my_y_title) +
+  theme(axis.text = element_text(size=10), axis.title = element_text(size=12), legend.text = element_text(size = 10))  +
+  geom_errorbar(aes(ymin=d-sd, ymax=d+sd), width=3)  +  
+  geom_smooth(method=lm, se=F) +
+  scale_x_continuous(breaks = c(0,0.025,0.05,0.075,0.1), limits = c(0,0.10))+
+  scale_y_continuous(breaks=c(0,5,10,15,20,25,30))+coord_cartesian(xlim = c(0,0.10), ylim = c(-2, 30))+  scale_color_manual(values =colorBlindBlack8[c(4,3,2)] )
+
+Aggregate4<-Zipf_data.GA %>% 
+  group_by(Gesture_record, Community) %>% # our group
+  summarise( # summarise operation by group
+    F=n(),
+    t=mean(t),
+    sd=sd(Ga_duration),
+    d=mean(Ga_duration),
+    logm=mean(log),
+    logsd=sd(log))
+
+my_x_title<- expression(paste("Relative frequency of Gesture Actions - t"))
+my_y_title<- expression(paste("PAU duration (s)"))
+library(ggplot2)
+P.Zipf.GA<-ggplot(Aggregate4, aes(x=t, y=d, color=Community)) +
+  geom_point(size=2.5) + 
+  theme_classic() +
+  labs(x=my_x_title, y=my_y_title) +
+  theme(axis.text = element_text(size=10), axis.title = element_text(size=12), legend.text = element_text(size = 10))  +
+  geom_errorbar(aes(ymin=d-sd, ymax=d+sd), width=3)  +  
+  geom_smooth(method=lm, se=F) +
+  scale_x_continuous(breaks = c(0,0.025,0.05,0.075), limits = c(0,0.08))+
+  scale_y_continuous(breaks=c(0,5,10,15,20,25,30))+coord_cartesian(xlim = c(0,0.08), ylim = c(-2, 30))+
+  scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+
+
+
+my_x_title<- expression(paste("Community"))
+my_y_title<- expression(paste("log(PAU duration (s))"))
+graph2<-ggplot(Zipf_data.GA, aes(x=Community, y=log, group=Community)) +
+  theme_classic() +  labs(x=my_x_title, y=my_y_title) +
+  theme(axis.text = element_text(size=10), axis.title = element_text(size=12), legend.position = 'none')  + geom_jitter(aes(color=Community))+ geom_boxplot(alpha=0.2, outlier.shape = NA)+ 
+  scale_color_manual(values =colorBlindBlack8[c(3,6,2)] )
+
+# Add significance lines
+n<-graph2 + geom_segment(aes(x = 1, xend = 3, y=5.5, yend=5.5),
+                        color = "black", size = 0.4) + 
+  geom_segment(aes(x = 1, xend = 2, y=5, yend=5),
+               color = "black", size = 0.4) + 
+  annotate("text", x = 2,
+           y = 5.6, label = "***", size = 6, color = "black")+
+  annotate("text", x = 1.5,
+           y = 5.1, label = "***", size = 6, color = "black")
+
+                     
+                     n
+```
+
+
+
+### Menzerath's law
+
+#### *M-model-GA*
+
+##### Morphs
+
+```{r Check model assumptions}
+Menzerath_GA<-read.csv("/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_FINAL_Reduced.csv")
+
+library(lme4)
+
+Menzerath_GA$log<-log(Menzerath_GA$Ga_duration) 
+#Menzerath_GA$Sequence_length<- ordered(Menzerath_GA$Sequence_length, #make sequence length as ordered variable
+                       levels = c(1, 2, 3, 4,5))
+
+
+#Check collinearity for model without interaction
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull))
+hist(resid(Mfull)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull), resid(Mfull)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+```
+
+```{r M-model-GA}
+# Fit the null model
+
+Mnull <- lmer(log ~ 1 + (1|Signaller)+ (1| morph) + (1|Goal), na.action = "na.pass", data =
+              Menzerath_GA)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull, Mfull)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull, test = "Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+#Going to recompute the model without the interaction factor
+Mfull <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+#Check and interpret model summary
+library(sjPlot)
+modified_tab_model(Mfull)
+
+#Change reference level
+Menzerath_GA$Social_unit <-as.factor(Menzerath_GA$Social_unit)
+Menzerath_GA$Social_unit  <- relevel(Menzerath_GA$Social_unit , ref = "Sonso")
+
+# fit the model again with the new reference level
+model3Menz <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller)+ (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+modified_tab_model(model3Menz)
+```
+
+```{r}
+#recompute models per community to test whether the relationship is significant
+Menzerath_GA_Sonso<-Menzerath_GA%>%filter(Social_unit=="Sonso")
+m_Sonso_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso)
+tab_model(m_Sonso_GA)
+modified_tab_model(m_Sonso_GA)
+confint(m_Sonso_GA)#Significant
+
+#Now repeat for Waibira
+Menzerath_GA_Waibira<-Menzerath_GA%>%filter(Social_unit=="Waibira")
+m_Waibira_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+help('isSingular')
+isSingular(m_Waibira_GA)
+rePCA(m_Waibira_GA)
+modified_tab_model(m_Waibira_GA)
+m_Waibira_GA<-lmer(log ~ Sequence_length + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+help('isSingular')
+isSingular(m_Waibira_GA)
+rePCA(m_Waibira_GA)
+library(sjPlot)
+tab_model(m_Waibira_GA)
+
+#Now repeat for Bosspu
+Menzerath_GA_Bossou<-Menzerath_GA%>%filter(Social_unit=="Bossou")
+m_Bossou_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+tab_model(m_Bossou_GA)
+modified_tab_model(m_Bossou_GA)
+confint(m_Bossou_GA)#Significant
+```
+
+##### Gesture Actions
+
+```{r Check model assumptions_GT}
+install.packages("car")
+library(car)
+#Check collinearity for model without interaction for gesture types
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.GT <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+install.packages('ggpubr')
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.GT)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.GT))
+hist(resid(Mfull.GT)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.GT), resid(Mfull.GT)) #he plot() function is used to check the homoscedasticity assumption of the residuals.
+```
+
+```{r M-model-GA}
+# Fit the null model
+Mnull.GT <- lmer(log ~ 1 + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull.GT, Mfull.GT)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.GT, test ="Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+#Going to recompute the model without the interaction factor
+Mfull.GT <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+
+#Check and interpret model summary
+modified_tab_model(Mfull.GT)
+tab_model(Mfull.GT)
+#Change reference level
+Menzerath_GA$Social_unit <- as.factor(Menzerath_GA$Social_unit)
+
+Menzerath_GA$Social_unit <- relevel(Menzerath_GA$Social_unit, ref = "Bossou")
+Mfull.GT <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_GA)
+modified_tab_model(Mfull.GT)
+
+
+```
+
+```{r}
+#recompute models per community to test whether the relationship is significa
+m_Sonso_GA.GT<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso)
+modified_tab_model(m_Sonso_GA.GT)
+
+#Now repeat for Waibira
+m_Waibira_GA.GT<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+help('isSingular')
+isSingular(m_Waibira_GA.GT)
+rePCA(m_Waibira_GA.GT)
+modified_tab_model(m_Waibira_GA.GT)
+m_Waibira_GA.GT<-lmer(log ~ Sequence_length + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+modified_tab_model(m_Waibira_GA.GT)
+
+#Now repeat for Bosspu
+m_Bossou_GA.GT<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+modified_tab_model(m_Bossou_GA.GT)
+
+plot_model()
+```
+
+\
+
+```{r}
+### Graph
+my_x_title<- expression(paste("Sequence length"))
+my_y_title<- expression(paste("log(PAU duration (s))"))
+A <- ggplot(Menzerath_GA, aes(x = as.numeric(Sequence_length), y = log)) +
+  theme_classic() +
+  geom_boxplot(aes(x = as.factor(Sequence_length), y = log), position = position_nudge(x = -0.15), width = 0.3, outlier.shape = NA) +
+  geom_jitter(position = position_jitter(width = 0.18), aes(x = as.numeric(Sequence_length) + .20, fill = Social_unit, colour=Social_unit), size = 1.5) +
+  scale_colour_manual(values = c("#00AFBB", "light blue", "Black")) +
+  geom_smooth(method = "lm", se = FALSE, color = 'blue') +
+  scale_shape_manual(values = c(21, 21, 20)) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title, color = "Community")+ guides(fill = "none")
+A
+
+my_x_title<- expression(paste("Community"))
+library(ggplot2)
+c<-ggplot(Menzerath_GA,aes(x=Social_unit, y=log, color=Sequence_length)) + theme_classic()+ theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title, color = "Sequence length") + guides(fill = "none")+  geom_point(position=position_jitterdodge(), alpha=0.2)+
+geom_boxplot(outlier.shape=NA)
+
+c
+```
+
+
+
+```{r Mfull_plots}
+B<-ggplot(k, aes(x=Sequence_length, y=log, color = Social_unit)) + geom_boxplot()
+  geom_jitter(position = position_jitter(width = 0.18),
+              aes(x = as.numeric(Sequence_length) + .20, shape=Social_unit),
+              size =1.5) +
+  geom_smooth(method = "lm", se=F, color='blue')+
+  scale_shape_manual(values=c(21, 21)) 
+  theme(axis.text = element_text(size=12),
+        axis.title = element_text(size=14), 
+        legend.text = element_text(size=12),
+        legend.title = element_text(size=14),
+        legend.position="top") 
+  
+
+my_y_title <- expression(paste("log(GA Duration)"))
+my_x_title<- expression(paste("Sequence length"))
+my_legend_title<- expression(paste("Community"))
+
+
+A <- ggplot(k, aes(x = as.numeric(Sequence_length), y = log)) +
+  theme_classic() +
+  geom_boxplot(aes(x = as.factor(Sequence_length), y = log), position = position_nudge(x = -0.15), width = 0.3, outlier.shape = NA) +
+  geom_jitter(position = position_jitter(width = 0.18), aes(x = as.numeric(Sequence_length) + .20, fill = Social_unit, colour=Social_unit), size = 1.5) +
+  scale_colour_manual(values = c("#00AFBB", "light blue", "Black")) +
+  geom_smooth(method = "lm", se = FALSE, color = 'blue') +
+  scale_shape_manual(values = c(21, 21, 20)) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title)
+
+A
+```
+
+#### *M-model-MAU*
+
+##### Morphs
+
+```{r M-model-MAU_asumptions}
+Menzerath_MAU<-read.csv("/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_MAU_FINAL_Reduced.csv")
+#Menzerath_MAU$Sequence_length<- ordered(Menzerath_MAU$Sequence_length, #make sequence length as ordered variable
+                      # levels = c(1, 2, 3, 4,5))
+#Checking model assumptions
+Menzerath_MAU$log<-log(Menzerath_MAU$Mau_duration) #transform gesture duration into log
+
+#Check for collinearity
+vifM.mau <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1|morph)+(1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+vif(vifM.mau)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.mau <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1|morph)+(1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.mau)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.mau))
+hist(resid(Mfull.mau)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.mau), resid(Mfull.mau)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+```
+
+```{r M-model-MAU_assumptions}
+   # null model
+# Fit the full model
+Mfull.mau <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1|morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+Mfull.mau.check <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1|morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+# Fit the null model
+Mnull.mau <- lmer(log ~ 1 + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT.mau <- anova(Mnull.mau, Mfull.mau)
+LRT.mau # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.mau, test = "Chisq")
+#The model containing the interaction factor fits the data best compared to the reduced model without the interaction between the factors
+
+#Check and interpret model summary
+modified_tab_model(Mfull.mau)
+install.packages("sjPlot")
+library(sjPlot)
+tab_model(Mfull.mau)
+#change reference
+Menzerath_MAU$Social_unit <-as.factor(Menzerath_MAU$Social_unit)
+Menzerath_MAU$Social_unit <- relevel(Menzerath_MAU$Social_unit, ref = "Sonso")
+Mfull.mau <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+summary(Mfull.mau)
+modified_tab_model(Mfull.mau)
+tab_model(Mfull.mau)
+str(Menzerath_MAU)
+#Posthoc -?
+library(emmeans)
+# Compute pairwise comparisons of group at each time point
+Mau.emms<-emmeans(Mfull.mau, ~Sequence_length * Social_unit, pbkrtest.limit = 7160)
+
+#Plot estimated marginal means to check out intreaction
+Mau.emmsp<-as.data.frame(Mau.emms)
+str(Mau.emmsp)
+
+emmau.plot<-ggplot(as.data.frame(Mau.emmsp), aes(x=Sequence_length, y= exp(emmean), color=Social_unit, group=Social_unit)) + 
+  geom_point(position=position_dodge(width=0.6)) +
+  geom_errorbar(aes(ymin=exp(lower.CL), ymax=exp(upper.CL)), width=.2,
+                 position=position_dodge(.6)) + 
+  theme_classic()+
+  labs(x = "Number of units in sequence", y = "MAU Estimated marginal means (s)", color = "Community")+
+
+
+tiff("Menzerath_law_MAU_EMMS.tiff", width = 7, height = 5, units = "in", res = 300, compression = "lzw")
+print(emmau.plot)
+dev.off()
+	
+
+#recompute models per community to test whether the relationship is significant
+Menzerath_MAU_Sonso<-Menzerath_MAU%>%filter(Social_unit=="Sonso")
+m_Sonso_MAU<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_MAU_Sonso)
+modified_tab_model(m_Sonso_MAU)
+
+#Now repeat for Waibira
+Menzerath_MAU_Waibira<-Menzerath_MAU%>%filter(Social_unit=="Waibira")
+m_Waibira_MAU<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_MAU_Waibira)
+modified_tab_model(m_Waibira_MAU)
+
+#Now repeat for Bosspu
+Menzerath_MAU_Bossou<-Menzerath_MAU%>%filter(Social_unit=="Bossou")
+m_Bossou_MAU<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_MAU_Bossou)
+modified_tab_model(m_Bossou_MAU)
+
+
+#Graphs
+my_y_title <- expression(paste("log(MAU duration (s))"))
+my_x_title <- expression(paste("Community"))
+
+b <- ggplot(t, aes(x = as.numeric(Sequence_length), y = log)) +
+  theme_classic() +
+  geom_boxplot(aes(x = as.factor(Sequence_length), y = log), position = position_nudge(x = -0.15), width = 0.3, outlier.shape = NA) +
+  geom_jitter(position = position_jitter(width = 0.18), aes(x = as.numeric(Sequence_length) + .20, fill = Social_unit, colour=Social_unit), size = 1.5) +
+  scale_colour_manual(values = c("#00AFBB", "light blue", "Black")) +
+  geom_smooth(method = "lm", se = FALSE, color = 'blue') +
+  scale_shape_manual(values = c(21, 21, 20)) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title)
+
+c<-ggplot(Menzerath_MAU,aes(x=Social_unit, y=log, color=Sequence_length)) + theme_classic()+geom_boxplot()+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title,color = "Sequence length")+ guides(fill = "none")+  geom_point(position=position_jitterdodge(), alpha=0.2)+
+geom_boxplot(outlier.shape=NA)
+c
+```
+
+##### Gesture Actions
+
+```{r M-model-MAU_asumptions}
+#Checking model assumptions for Menzerath model in GT 
+#Check for collinearity
+vifM.mau.GT <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1|Gesture_record)+(1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+vif(vifM.mau.GT)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.mau.GT <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1|Gesture_record)+(1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.mau.GT)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.mau.GT))
+hist(resid(Mfull.mau.GT)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.mau.GT), resid(Mfull.mau.GT)) #he plot() function is used to check the homoscedasticity assumption of the residuals. 
+```
+
+```{r M-model-MAU_assumptions}
+# Fit the full model
+Mfull.mau.GT <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1|Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+# Fit the null model
+Mnull.mau.GT <- lmer(log ~ 1 + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT.mau.GT <- anova(Mnull.mau.GT, Mfull.mau.GT)
+LRT.mau.GT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.mau.GT, test = "Chisq")
+#The model containing the interaction factor fits the data best compared to the reduced model without the interaction between the factors
+
+#Check and interpret model summary
+modified_tab_model(Mfull.mau.GT)
+tab_model(Mfull.mau.GT)
+
+#change reference
+Menzerath_MAU$Social_unit <- as.factor(Menzerath_MAU$Social_unit )
+Menzerath_MAU$Social_unit <- relevel(Menzerath_MAU$Social_unit, ref = "Bossou")
+Mfull.mau.GT <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU)
+modified_tab_model(Mfull.mau.GT)
+tab_model(Mfull.mau.GT)
+
+
+
+
+
+#Posthoc
+library(emmeans)
+# Compute pairwise comparisons of group at each time point
+Mau.emms<-emmeans(Mfull.mau.GT, ~Sequence_length * Social_unit, pbkrtest.limit = 7160)
+
+#Plot estimated marginal means to check out intreaction
+Mau.emmsp<-as.data.frame(Mau.emms)
+str(Mau.emmsp)
+
+emmau.plot<-ggplot(as.data.frame(Mau.emmsp), aes(x=Sequence_length, y= exp(emmean), color=Social_unit, group=Social_unit)) + 
+  geom_point(position=position_dodge(width=0.6)) +
+  geom_errorbar(aes(ymin=exp(lower.CL), ymax=exp(upper.CL)), width=.2,
+                 position=position_dodge(.6)) + 
+  theme_classic()+
+  labs(x = "Number of units in sequence", y = "MAU Estimated marginal means (s)", color = "Community")+
+
+
+tiff("Menzerath_law_MAU_EMMS.tiff", width = 7, height = 5, units = "in", res = 300, compression = "lzw")
+print(emmau.plot)
+dev.off()
+	
+
+#recompute models per community to test whether the relationship is significant
+m_Sonso_MAU.GT<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_MAU_Sonso)
+modified_tab_model(m_Sonso_MAU.GT)
+
+
+
+#Now repeat for Bosspu
+m_Bossou_MAU.GT<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_MAU_Bossou)
+modified_tab_model(m_Bossou_MAU.GT)
+
+
+  ```
+
+```{r}
+### Graph
+my_x_title<- expression(paste("Sequence length"))
+my_y_title<- expression(paste("log (MAU duration (s))"))
+A <- ggplot(Menzerath_MAU, aes(x = as.numeric(Sequence_length), y = log)) +
+  theme_classic() +
+  geom_boxplot(aes(x = as.factor(Sequence_length), y = log), position = position_nudge(x = -0.15), width = 0.3, outlier.shape = NA) +
+  geom_jitter(position = position_jitter(width = 0.18), aes(x = as.numeric(Sequence_length) + .20, fill = Social_unit, colour=Social_unit), size = 1.5) +
+  scale_colour_manual(values = c("#00AFBB", "light blue", "Black")) +
+  geom_smooth(method = "lm", se = FALSE, color = 'blue') +
+  scale_shape_manual(values = c(21, 21, 20)) +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title, color = "Community")+ guides(fill = "none")
+A
+
+my_x_title<- expression(paste("Community"))
+
+c<-ggplot(Menzerath_MAU,aes(x=Social_unit, y=log, color=Sequence_length)) + theme_classic()+geom_boxplot()+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "top") +
+  labs(x = my_x_title, y = my_y_title, color = "Sequence length") + guides(fill = "none")
+
+c
+
+
+
+
+```
+
+
+
+### Menzerath's law in sequences >1 - GA
+
+
+```{r}
+Menzerath_GA<-read.csv("/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_FINAL_Reduced.csv")
+library(lme4)
+Menzerath_GA$log<-log(Menzerath_GA$Ga_duration) 
+#Menzerath_GA$Sequence_length<- ordered(Menzerath_GA$Sequence_length, #make sequence length as ordered variable
+ #                      levels = c(1, 2, 3, 4,5))
+
+Menzerath.ga.2<-Menzerath_GA%>%filter(Sequence_length>1)
+
+library(car)
+library(lme4)
+#Check collinearity for model without interaction
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull))
+hist(resid(Mfull)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull), resid(Mfull)) #he 
+
+Mnull <- lmer(log ~ 1 + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data =
+                Menzerath.ga.2)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull, Mfull)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull, test = "Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+#Going to recompute the model without the interaction factor
+Mfull <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+#Check and interpret model summary
+library(sjPlot)
+modified_tab_model(Mfull)
+
+#Change reference level
+Menzerath.ga.2$Social_unit <-as.factor(Menzerath.ga.2$Social_unit)
+Menzerath.ga.2$Social_unit  <- relevel(Menzerath.ga.2$Social_unit , ref = "Sonso")
+
+# fit the model again with the new reference level
+model3Menz <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+modified_tab_model(model3Menz)
+
+#recompute models per community to test whether the relationship is significant
+Menzerath_GA_Sonso.sub<-Menzerath.ga.2%>%filter(Social_unit=="Sonso")
+m_Sonso_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso.sub)
+modified_tab_model(m_Sonso_GA)
+
+#Now repeat for Waibira
+Menzerath_GA_Waibira<-Menzerath.ga.2%>%filter(Social_unit=="Waibira")
+m_Waibira_GA<-lmer(log ~ Sequence_length  + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+modified_tab_model(m_Waibira_GA)
+
+#Now repeat for Bosspu
+Menzerath_GA_Bossou<-Menzerath.ga.2%>%filter(Social_unit=="Bossou")
+m_Bossou_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+modified_tab_model(m_Bossou_GA)
+confint(m_Bossou_GA)#Significant
+
+
+###morphs
+library(car)
+library(lme4)
+#Check collinearity for model without interaction
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.sub.morph <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.sub.morph)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.sub.morph))
+hist(resid(Mfull.sub.morph)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.sub.morph), resid(Mfull.sub.morph)) #he 
+
+Mnull <- lmer(log ~ 1 + (1|Signaller)+ (1| morph) + (1|Goal), na.action = "na.pass", data =
+                Menzerath.ga.2)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull, Mfull.sub.morph)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.sub.morph, test = "Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+#Going to recompute the model without the interaction factor
+Mfull.sub.morph <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+#Check and interpret model summary
+library(sjPlot)
+modified_tab_model(Mfull.sub.morph)
+
+#Change reference level
+Menzerath.ga.2$Social_unit <-as.factor(Menzerath.ga.2$Social_unit)
+Menzerath.ga.2$Social_unit  <- relevel(Menzerath.ga.2$Social_unit , ref = "Bossou")
+
+# fit the model again with the new reference level
+model3Menz <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath.ga.2)
+modified_tab_model(model3Menz)
+
+
+#recompute models per community to test whether the relationship is significant
+Menzerath_GA_Sonso.sub<-Menzerath.ga.2%>%filter(Social_unit=="Sonso")
+m_Sonso_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso.sub)
+modified_tab_model(m_Sonso_GA)
+
+#Now repeat for Waibira
+Menzerath_GA_Waibira<-Menzerath.ga.2%>%filter(Social_unit=="Waibira")
+m_Waibira_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+modified_tab_model(m_Waibira_GA)
+
+#Now repeat for Bosspu
+Menzerath_GA_Bossou<-Menzerath.ga.2%>%filter(Social_unit=="Bossou")
+m_Bossou_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+modified_tab_model(m_Bossou_GA)
+confint(m_Bossou_GA)#Significant
+```
+
+### Menzerath's law in sequences >1 - MAU
+
+
+```{r}
+Menzerath_MAU<-read.csv("/Users/as493/Documents/GitHub/PhD_Thesis/Data/Menzerath_Data_MAU_FINAL_Reduced.csv")
+#Menzerath_MAU$Sequence_length<- ordered(Menzerath_MAU$Sequence_length, #make sequence length as ordered variable
+#                       levels = c(1, 2, 3, 4,5))
+#Checking model assumptions
+Menzerath_MAU$log<-log(Menzerath_MAU$Mau_duration) #
+
+Menzerath_MAU.sub<-Menzerath_MAU%>%filter(Sequence_length>1)
+library(car)
+library(lme4)
+#Check collinearity for model without interaction
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.MAU.sub<- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.MAU.sub)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.MAU.sub))
+hist(resid(Mfull.MAU.sub)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.MAU.sub), resid(Mfull.MAU.sub)) #he 
+
+Mnull <- lmer(log ~ 1 + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data =
+                Menzerath_MAU.sub)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull, Mfull.MAU.sub)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.MAU.sub, test = "Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+
+#Check and interpret model summary
+library(sjPlot)
+modified_tab_model(Mfull.MAU.sub)
+
+#Change reference level
+Menzerath_MAU.sub$Social_unit <-as.factor(Menzerath_MAU.sub$Social_unit)
+Menzerath_MAU.sub$Social_unit  <- relevel(Menzerath_MAU.sub$Social_unit , ref = "Sonso")
+
+# fit the model again with the new reference level
+model3Menz <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller)+ (1| Gesture_record) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+modified_tab_model(model3Menz)
+
+#recompute models per community to test whether the relationship is significant
+Menzerath_GA_Sonso.sub<-Menzerath_MAU.sub%>%filter(Social_unit=="Sonso")
+m_Sonso_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso.sub)
+modified_tab_model(m_Sonso_GA)
+
+#Now repeat for Waibira
+Menzerath_GA_Waibira<-Menzerath_MAU.sub%>%filter(Social_unit=="Waibira")
+m_Waibira_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+modified_tab_model(m_Waibira_GA)
+
+#Now repeat for Bosspu
+Menzerath_GA_Bossou<-Menzerath_MAU.sub%>%filter(Social_unit=="Bossou")
+m_Bossou_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| Gesture_record) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+modified_tab_model(m_Bossou_GA)
+confint(m_Bossou_GA)#Significant
+
+
+###morphs
+library(car)
+library(lme4)
+#Check collinearity for model without interaction
+vifM<- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+vif(vifM)#Check for multicollinearity - anything below 2 is acceptable
+
+#Check full model assumptions
+Mfull.sub.MAU.morph <- lmer(log ~ Sequence_length*Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+library(ggpubr)
+plot(1)
+par(mfrow = c(2,2))
+qqnorm(resid(Mfull.sub.MAU.morph)) # The qqnorm() and qqline() functions are used to check the normality assumption of the residuals.
+qqline(resid(Mfull.sub.MAU.morph))
+hist(resid(Mfull.sub.MAU.morph)) #The hist() function is used to check the symmetry of the residuals. 
+plot(fitted(Mfull.sub.MAU.morph), resid(Mfull.sub.MAU.morph)) #he 
+
+Mnull <- lmer(log ~ 1 + (1|Signaller)+ (1| morph) + (1|Goal), na.action = "na.pass", data =
+                Menzerath_MAU.sub)
+
+# Compare the full and null models using likelihood ratio test (LRT)
+LRT <- anova(Mnull, Mfull.sub.MAU.morph)
+LRT # print the LRT table - the full model fits data best compared to null model
+
+# Perform sequential model comparison using drop1()
+drop1(Mfull.sub.MAU.morph, test = "Chisq")
+#The model containing the interaction factor does not fit the data best compared to the reduced model without the interaction between the factors
+#Going to recompute the model without the interaction factor
+Mfull.sub.morph <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+#Check and interpret model summary
+library(sjPlot)
+modified_tab_model(Mfull.sub.morph)
+
+#Change reference level
+Menzerath_MAU.sub$Social_unit <-as.factor(Menzerath_MAU.sub$Social_unit)
+Menzerath_MAU.sub$Social_unit  <- relevel(Menzerath_MAU.sub$Social_unit , ref = "Bossou")
+
+# fit the model again with the new reference level
+model3Menz <- lmer(log ~ Sequence_length+Social_unit + (1|Signaller)+ (1| morph) + (1|Goal), na.action = "na.pass", data = Menzerath_MAU.sub)
+modified_tab_model(model3Menz)
+
+
+#recompute models per community to test whether the relationship is significant
+Menzerath_GA_Sonso.sub<-Menzerath_MAU.sub%>%filter(Social_unit=="Sonso")
+m_Sonso_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Sonso.sub)
+modified_tab_model(m_Sonso_GA)
+
+#Now repeat for Waibira
+Menzerath_GA_Waibira<-Menzerath_MAU.sub%>%filter(Social_unit=="Waibira")
+m_Waibira_GA<-lmer(log ~ Sequence_length +  (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Waibira)
+modified_tab_model(m_Waibira_GA)
+
+#Now repeat for Bosspu
+Menzerath_GA_Bossou<-Menzerath_MAU.sub%>%filter(Social_unit=="Bossou")
+m_Bossou_GA<-lmer(log ~ Sequence_length + (1|Signaller) + (1| morph) + (1|Goal), na.action = "na.pass", data= Menzerath_GA_Bossou)
+modified_tab_model(m_Bossou_GA)
+confint(m_Bossou_GA)#Significant
+```
